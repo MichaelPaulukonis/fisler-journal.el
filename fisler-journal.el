@@ -26,6 +26,9 @@
 (defvar journal-mode-map nil
   "Local keymap for Journal mode buffers.")
 
+(defvar journal-root nil
+  "buffer-local root for journal system.")
+
 ;; set up the journal mode keymap
 ;; with C-j to start a new journal entry (or load today's)
 ;; and C-S-j to search through existing entries
@@ -54,26 +57,12 @@
 
 
 (defun journal-mode ()
-  "Journal mode. Daily journal, yadda-yadda.
-Plus the following commands:
-    C-j C-j  new journal entry
-    C-j C-s  search (grep) existing entries.
-    C-jj     journal
-    C-j C-s  journal-search
-    C-js     journal-search
-    C-n      now
-    C-j C-d  journal-divider
-    C-j C-n  journal-new-section
-    M-n      journal-next-section
-    M-p      journal-previous-section
-    C-tn     journal-insert-todo
-    C-tl     journal-todo-list
-    C-t C-l  journal-done-list
-    C-t C-d  journal-todo-changeto-done
-    C-td     journal-todo-done
-    C-jc     journal-clean-temps
+  "Journal mode. Daily journal with a customizeable root. allows for grouped notes, searching,
+TODO lists, etc. yadda-yadda.
 
-    these commands could be documented better.
+You might be better off with org-mode, if you know how to use it.
+
+\\{journal-mode-map}
 
 Additionally, `allout-mode' (allout.el) has been enabled by default."
   (interactive)
@@ -81,15 +70,17 @@ Additionally, `allout-mode' (allout.el) has been enabled by default."
   (setq major-mode 'journal-mode)
   (setq mode-name "Journal")
   (use-local-map journal-mode-map)
-
-  (set (make-local-variable 'font-lock-defaults) '(journal-font-lock-keywords))
   (goto-address) ;;Activate URLs and e-mail addresses in the current buffer.
-
   (allout-mode)
 
-;; okay, this is annoying me
-;;  (setq fill-column 90) ;; 90 seems to be wide enough, but not too narrow
-;;  (auto-fill-mode)
+  (set (make-local-variable 'font-lock-defaults) '(journal-font-lock-keywords))
+
+  ;; maybe this is bad practice, making it part of journal. eh
+  ;; http://emacs-fu.blogspot.com/2009/11/making-buffer-names-unique.html
+  (require 'uniquify)
+  (setq
+   uniquify-buffer-name-style 'post-forward
+   uniquify-separator ":")
 
   (provide 'journal-mode)
 
@@ -104,23 +95,32 @@ Additionally, `allout-mode' (allout.el) has been enabled by default."
 
 ;; look at this, and work with some of the date commands
 ;; open yesterday's journal more readily
-(defun journal (filename)
+(defun journal (&optional root)
   "Open .jnl file named after today's date, format YYYY-MM-DD-Day.jnl,
-in subdirectory named in variable journal-dir, set in ~/.emacs,
-else in $HOME."
-  (interactive
-   (progn
+in subdirectory named in variable journal-root, set in ~/.emacs,
+else in $HOME.
 
-     (setq default-directory (year-month-dir))
-     (setq filename (concat (format-time-string "%Y-%m-%d-%a" nil) ".jnl"))
+\\{journal-mode-map}
+"
+  (interactive)
+  (progn
+    (setq journal-root (or root journal-dir))
+    (setq default-directory (year-month-dir journal-root))
+    (setq filename (concat (format-time-string "%Y-%m-%d-%a" nil) ".jnl"))
 
-     (list (read-file-name
-        "Open journal file: " (year-month-dir) filename nil filename))
-     ))
+    (list (read-file-name
+	   "Open journal file: " (year-month-dir journal-root) filename nil filename)))
 
+  ;; for debugging
+  ;;(message (concat "journal root: " journal-root " filename " filename))
+
+  ;; something I don't understand -- how does this work with the year-month-dir??? I'm confused....
   (find-file filename) ;; switch to buffer if exists, or open file
 
-)
+  ;; s/b local to the opened buffer, yes? maybe....
+  (make-local-variable 'journal-root)
+
+  )
 
 
 (defun journal-open-journal ()
@@ -130,33 +130,32 @@ Would be nice to allow interactive selection of month and year...."
   (ido-find-file)
 )
 
-(defun year-month-dir ()
+(defun year-month-dir-original ()
 "Add Year-Month dir to the defaul journal dir;
 creates if does not exist."
   (interactive)
-  (let ((path (concat journal-dir (format-time-string "%Y-%m" nil) "/")))
-	(unless (file-directory-p path) (make-directory path t))
-	path)
-)
+  (let ((path (concat journal-root (format-time-string "%Y-%m" nil) "/")))
+    (unless (file-directory-p path) (make-directory path t))
+    path))
 
-
-;; ;;;; commands
-;; (defun umemo-save ()
-;;   "Save current usage memo(annotation) into file."
-;;   (interactive)
-;;   (umemo-if-buffer-has-separator
-;;    (let* ((path (umemo-pathname umemo-category umemo-entry-name))
-;;           (dir  (file-name-directory path)))
-;;      (unless (file-directory-p dir) (make-directory dir t))
-;;      (write-region (point) (point-max) path)
-;;      (set-buffer-modified-p nil)
-;;      (message "Wrote %s" path))))
+(defun year-month-dir (root)
+"Add Year-Month dir to the defaul journal dir;
+creates if does not exist."
+  (interactive)
+  (let ((path (concat root (format-time-string "%Y-%m" nil) "/")))
+    (unless (file-directory-p path) (make-directory path t))
+    path))
 
 
 (defun now ()
   "Insert string for the current time formatted like '2:34 PM'."
   (interactive)                 ; permit invocation in minibuffer
-  (insert (format-time-string "%D %-I:%M %p"))
+  (insert (get-now))
+)
+
+(defun get-now ()
+  "string for the current time formatted like '2:34 PM'."
+  (format-time-string "%D %-I:%M %p")
 )
 
 
@@ -164,7 +163,14 @@ creates if does not exist."
   "Insert string for today's date nicely formatted in American style,
 e.g. Sunday, September 17, 2000."
   (interactive)                 ; permit invocation in minibuffer
-  (insert (format-time-string "%A, %B %e, %Y"))
+  (insert (get-today))
+)
+
+(defun get-today ()
+  "Insert string for today's date nicely formatted in American style,
+e.g. Sunday, September 17, 2000."
+  (interactive)                 ; permit invocation in minibuffer
+  (format-time-string "%A, %B %e, %Y")
 )
 
 
@@ -253,10 +259,29 @@ e.g. Sunday, September 17, 2000."
 )
 
 ;; if at beginning of file, there should be no initial space
-(defun journal-new-section (sectionName)
+;; (defun journal-new-section (sectionName)
+;;   "Insert a divider with a section name"
+;;   (interactive "sSection Name: ")
+;;   (insert "\n\n\*" divider-mark sectionName divider-mark "\n\n")
+;; )
+;;; date+time by default
+;;; would be nicer if this only appeared when we hit M-u
+;;; or put the cursor at the beginning of the line...
+;; (defun journal-new-section (sectionName)
+;;   "Insert a divider with a section name"
+;;   (interactive (list (read-from-minibuffer "Section Name: " (concat (get-today) (get-now) ))))
+;;   (insert "\n\n\*" divider-mark sectionName divider-mark "\n\n")
+;; )
+
+;; if universal argument is passed, prefix with today's date and time
+(defun journal-new-section (sectionName &optional insertDate)
   "Insert a divider with a section name"
-  (interactive "sSection Name: ")
-  (insert "\n\n\*" divider-mark sectionName divider-mark "\n\n")
+  (interactive "sSection Name: \nP")
+  (setq dtstring
+    (if insertDate
+        (concat (get-today) (get-now) " ")
+    ""))
+  (insert (format "\n\n\*%s%s%s%s\n\n" divider-mark dtstring sectionName divider-mark))
 )
 
 ;; jump to next section
@@ -278,13 +303,34 @@ e.g. Sunday, September 17, 2000."
 
 ;; search the journal directories
 (defun journal-search (j-regexp)
-  "Seach the journal-dir for the given Regular Expression"
+  "Seach the journal-root for the given Regular Expression"
   (interactive "sExpression to search for: ")
   ;;(setq grep-template "grep <C> -nH -e <R> <F>")
-  ;;(lgrep j-regexp "*.jnl" journal-dir)
-  (setq grep-find-template "find \"<D>\" <X> -type f -name <F> -print0 | xargs -0 grep <C> -n <R> ")
-  (rgrep j-regexp "*.jnl" journal-dir)
-)
+  ;;(lgrep j-regexp "*.jnl" journal-root)
+  ;;(setq grep-find-template "find \"<D>\" <X> -type f -name <F> -print0 | xargs -0 grep <C> -n <R> ")
+  ;;; what shows up in grep as of 2012.10.05 grep -r -i -nH -e "modified" . --include="*.jnl"
+  ;;; 2012.10.05 for months, if not for years, search has not been working the first time called
+  ;;; instead, I have to open the journal directory, perform an rgrep
+  ;;; and from then on search will work (in that instance of Emacs)
+
+  ;;; 2012.10.05 I have no idea why I was using two separate templates
+  ;;;            nor do I even remember how to use templates. argh
+  ;;;            but the value is now, somehow, set to the second, ie non-work-machine, value below
+  ;; (let ((template (if (is-work-machine) "find \"<D>\" <X> -type f -name <F> -print0 | xargs -0 grep <C> -n <R> "
+  ;;                                       "find \"<D>\" -type f <F> -print0 | xargs -0 grep <C> -n <R> ")))
+  ;; (let ((template "find \"<D>\" -type f <F> -print0 | xargs -0 grep <C> -n <R> "))
+  ;; Monday, May 20, 2013
+  ;; one more variation, inspired by http://stackoverflow.com/a/7015664/41153
+  ;; the template provided in the answer did not work, but suggested looking at the variable 'grep-find-template'
+  ;; which is defined when rgrep is called interactively
+  ;; I called, checked, and pasted below. will see if this works...
+  (let ((template "find . <X> -type f <F> -print | xargs grep <C> -nH -e <R>"))
+
+  ;;(setq grep-find-template template))
+  ;; original home (setq grep-find-template "find \"<D>\" -type f <F> -print0 | xargs -0 grep <C> -n <R> "))
+  ;; emacs-23 (setq grep-find-template "find \"<D>\" <X> -type f -name <F> -print0 | xargs -0 grep <C> -n <R> ")
+  (rgrep j-regexp "*.jnl" journal-root)))
+
 
 (defconst todo-marker "TODO: ")
 (defconst done-marker "DONE: ")
@@ -410,9 +456,9 @@ e.g. Sunday, September 17, 2000."
 
 
 (defun journal-clean-temps ()
-"clean up temp (\"~\") files in journal-directory"
+"clean up temp (\"~\") files in journal-rootectory"
   (interactive)
-  (dired journal-dir)
+  (dired journal-root)
   (revert-buffer)  ;;make sure buffer is current
   (dired-flag-backup-files)
   (dired-do-flagged-delete t)
